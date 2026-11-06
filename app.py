@@ -316,6 +316,11 @@ def analyze():
             if p.is_file() and not p.name.endswith('.tmp'):
                 z.write(p, str(Path(DAY.isoformat())/p.relative_to(BASE)))
     Path(str(archive)+'.tmp').replace(archive)
+    LOG.info('CTM_REPORT_SUMMARY %s', json.dumps({k:v for k,v in report.items() if k not in ('by_route','hourly')},ensure_ascii=False))
+    for route,values in results.items():
+        LOG.info('CTM_REPORT_ROUTE %s',json.dumps({'route_id':route,**values}))
+    for hour,values in hours.items():
+        LOG.info('CTM_REPORT_HOUR %s',json.dumps({'hour':hour,**dict(values)}))
     LOG.info('Archive and report ready')
 
 
@@ -324,6 +329,7 @@ def collect():
         try:
             current=now().astimezone(TZ)
             if current < MIDNIGHT:
+                LOG.info('CTM_WAITING collection_start=%s',MIDNIGHT.isoformat())
                 STOP.wait(min(60,(MIDNIGHT-current).total_seconds()));continue
             plan=prepare()
             end=datetime.fromisoformat(plan['collection_end'])
@@ -336,6 +342,7 @@ def collect():
             with ThreadPoolExecutor(max_workers=2) as pool:
                 list(pool.map(lambda k:capture(k,slot), FEEDS))
             save_json(BASE/'status.json',{'last_cycle':now().isoformat(),'plan':plan})
+            LOG.info('CTM_CYCLE completed slot=%s',slot)
             STOP.wait(max(0.1,slot+60-time.time()))
         except Exception:
             LOG.exception('Collector cycle failed')
@@ -373,6 +380,10 @@ class Handler(BaseHTTPRequestHandler):
 if __name__=='__main__':
     logging.basicConfig(level=logging.INFO)
     ROOT.mkdir(parents=True,exist_ok=True)
+    probe=ROOT/'.write-probe'
+    atomic(probe,b'write test')
+    probe.unlink()
+    LOG.info('CTM_STORAGE_READY path=%s',ROOT)
     if not os.environ.get('ACCESS_PASSWORD'):
         raise SystemExit('ACCESS_PASSWORD is required')
     thread=threading.Thread(target=collect,daemon=True);thread.start()
