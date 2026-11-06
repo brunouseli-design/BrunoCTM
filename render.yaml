@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: ctm-monitor-2026-11-07
+    runtime: python
+    region: frankfurt
+    plan: 0.5c-512mb
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    autoDeployTrigger: 'off'
+    healthCheckPath: /health
+    disk:
+      name: ctm-archive
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: SERVICE_DATE
+        value: '2026-11-07'
+      - key: ACCESS_PASSWORD
+        generateValue: true
