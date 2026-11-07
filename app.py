@@ -389,7 +389,9 @@ def collect():
                 archive=ROOT/('ctm-'+DAY.isoformat()+'.zip')
                 if not archive.exists(): analyze()
                 return
-            slot=int(time.time()//POLL_SECONDS)*POLL_SECONDS
+            # Use the actual second: phase correction can place two distinct
+            # upstream generations inside the same wall-clock 30-second bin.
+            slot=int(time.time())
             # Parallel requests keep the two snapshots close together.
             with ThreadPoolExecutor(max_workers=2) as pool:
                 records=list(pool.map(lambda k:capture(k,slot), FEEDS))
