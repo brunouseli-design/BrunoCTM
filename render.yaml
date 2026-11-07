@@ -11,7 +11,7 @@ services:
     disk:
       name: ctm-archive
       mountPath: /var/data
-      sizeGB: 1
+      sizeGB: 8
     envVars:
       - key: DATA_DIR
         value: /var/data
