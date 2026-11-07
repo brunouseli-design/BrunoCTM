@@ -1,11 +1,11 @@
 # Archivio CTM — giornata di servizio 7 novembre 2026
 
-Progetto preparato per Render; **non ancora pubblicato o attivato**.
+Servizio pubblicato su Render per la giornata di servizio del 7 novembre 2026.
 
 ## Funzionamento
 
 - Un singolo servizio Python con disco persistente da 1 GB.
-- Due richieste parallele a intervalli di 60 secondi, allineati al minuto.
+- Due richieste parallele a intervalli nominali di 30 secondi, allineati ai timestamp CTM più 6 secondi per la pubblicazione. Timestamp assenti o obsoleti: fallback di 30 secondi.
 - Il 7 novembre conserva una copia del GTFS statico Flashnet, quindi ricava dai
   calendari e dalle eccezioni le corse attive e l'ultimo orario programmato.
 - La finestra inizia alle 00:00 Europe/Rome del 7 novembre e termina almeno
@@ -36,7 +36,7 @@ una successiva analisi delle osservazioni e delle loro caratteristiche.
 Caricare questi file nella radice di un repository GitHub accessibile a Render.
 Creare un Blueprint dal render.yaml; verificare costi e piano prima di applicarlo.
 La configurazione richiede un servizio a pagamento e un disco persistente.
-Non sono stati creati servizi a pagamento. Il costo esatto va verificato nel piano Render.
+Il piano approvato comprende 512 MB RAM e disco da 1 GB.
 
 Render genera ACCESS_PASSWORD. Accedere all'URL del servizio con utente `ctm`
 e quella password, reperibile nelle variabili del servizio. Non pubblicare la
@@ -54,6 +54,8 @@ Python 3.12 o successivo con fuso Europe/Rome disponibile:
 pip install -r requirements.txt
 python -m unittest -v
 ```
+
+Il cambio da 60 a 30 secondi è registrato in sampling-changes.json e nei log CTM_SAMPLING_CHANGE. I campioni già raccolti sono conservati; eventuali buchi di deploy sono misurati dai timestamp. Il conteggio nominale delle richieste tiene conto delle due frequenze e può differire dalle pubblicazioni effettive CTM.
 
 Fonte: CTM S.p.A., https://flashnetctm.miz.it/download/gtfs/
 Il GTFS statico è pubblicato da CTM con licenza CC BY 3.0 Italia.

@@ -21,6 +21,13 @@ def fixture(path):
 
 
 class Tests(unittest.TestCase):
+    def test_poll_follows_newer_feed_clock(self):
+        records=[{'valid_gtfs_rt':True,'timestamp':1000},{'valid_gtfs_rt':True,'timestamp':1001}]
+        self.assertEqual(app.next_poll_time(records,1008),1037)
+        self.assertEqual(app.next_poll_time(records,1100),1130)
+        self.assertEqual(app.next_poll_time([{'valid_gtfs_rt':False}],1008),1038)
+        self.assertEqual(app.next_poll_time([{'valid_gtfs_rt':True,'timestamp':2000}],1008),1038)
+
     def test_service_exceptions_and_overnight(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);fixture(root/'static.zip')

@@ -38,6 +38,23 @@ FEEDS = {kind: 'https://flashnetctm.miz.it/download/gtfs/gtfs-rt-' + kind + '.pb
          for kind in ('trip-updates', 'vehicle-positions')}
 STOP = threading.Event()
 LOG = logging.getLogger('ctm')
+POLL_SECONDS = 30
+PUBLICATION_GRACE_SECONDS = 6
+
+
+def next_poll_time(records, current):
+    """Follow CTM's generation clock, allowing time for files to be published.
+
+    This is timestamp-based best effort, not a push notification subscription.
+    Invalid/stale headers use a bounded 30-second fallback.
+    """
+    stamps = [r['timestamp'] for r in records if r and r.get('valid_gtfs_rt')
+              and r.get('timestamp') and 0 <= current-r['timestamp'] <= 120]
+    if stamps:
+        target = max(stamps) + POLL_SECONDS + PUBLICATION_GRACE_SECONDS
+        if current + 1 <= target <= current + POLL_SECONDS + PUBLICATION_GRACE_SECONDS:
+            return target
+    return current + POLL_SECONDS
 
 
 def now():
@@ -163,8 +180,9 @@ def capture(kind, slot):
     prefix = BASE / 'snapshots' / name[:8] / (name + '-' + kind)
     metadata = Path(str(prefix) + '.json')
     if metadata.exists():
-        return
+        return json.loads(metadata.read_text())
     record = {'kind': kind, 'url': FEEDS[kind], 'scheduled_at': slot,
+              'target_interval_seconds': POLL_SECONDS,
               'requested_at': now().isoformat(), 'valid_gtfs_rt': False}
     try:
         raw, meta = request(FEEDS[kind], 20 * 1024 * 1024)
@@ -182,6 +200,7 @@ def capture(kind, slot):
         LOG.warning('%s: %s', kind, record['error'])
     record['completed_at'] = now().isoformat()
     save_json(metadata, record)
+    return record
 
 
 def analyze():
@@ -192,6 +211,9 @@ def analyze():
     seen_trips = set()
     seen_vehicles = set()
     attempted_slots = set()
+    previous_fetch = {}
+    previous_hash = {}
+    max_gap_seconds = {}
     latest = {}
     stats = Counter()
     hours = defaultdict(Counter)
@@ -204,6 +226,17 @@ def analyze():
             continue
         stats['valid_snapshots'] += 1
         fetched = datetime.fromisoformat(m['requested_at']).timestamp()
+        kind=m['kind']
+        if kind in previous_fetch:
+            prev_time,prev_interval=previous_fetch[kind]
+            gap=fetched-prev_time
+            max_gap_seconds[kind]=max(max_gap_seconds.get(kind,0),gap)
+            if gap > max(prev_interval,m.get('target_interval_seconds',60))+15:
+                stats['long_collection_gaps']+=1
+        previous_fetch[kind]=(fetched,m.get('target_interval_seconds',60))
+        if m.get('sha256') and previous_hash.get(kind)==m['sha256']:
+            stats['unchanged_valid_snapshots']+=1
+        previous_hash[kind]=m.get('sha256')
         stamp = m.get('timestamp')
         if not stamp or not -60 <= fetched - stamp <= 120:
             stats['stale_or_missing_header_timestamp'] += 1
@@ -286,20 +319,29 @@ def analyze():
                 'share_within_minus60_plus300':round(sum(-60<=v<=300 for v in values)/len(values),4)}
     results = {route:summary(values) for route,values in by_route.items()}
     plan=json.loads((BASE/'plan.json').read_text())
-    expected_slots=math.ceil((datetime.fromisoformat(plan['collection_end']).timestamp()-MIDNIGHT.timestamp())/60)*2
-    stats['expected_requests']=expected_slots
-    stats['missing_requests']=max(0,expected_slots-len(attempted_slots))
+    changes_path=BASE/'sampling-changes.json'
+    changes=json.loads(changes_path.read_text()) if changes_path.exists() else []
+    boundaries=[(MIDNIGHT.timestamp(),60)]+[(r['effective_at_epoch'],r['interval_seconds']) for r in changes]
+    end_epoch=datetime.fromisoformat(plan['collection_end']).timestamp()
+    expected_slots=0
+    for i,(begin,interval) in enumerate(boundaries):
+        finish=min(end_epoch,boundaries[i+1][0] if i+1<len(boundaries) else end_epoch)
+        expected_slots+=max(0,math.ceil((finish-max(begin,MIDNIGHT.timestamp()))/interval))*2
+    stats['nominal_expected_requests']=expected_slots
+    stats['shortfall_vs_nominal_requests']=max(0,expected_slots-len(attempted_slots))
     report = {'service_date':DAY.isoformat(),'generated_at':now().isoformat(),
               'quality':dict(stats),'unique_vehicle_ids':len(seen_vehicles),
               'scheduled_trips':len(trip_routes),'matched_trips_seen':len(seen_trips),
               'coverage_fraction':len(seen_trips)/len(trip_routes) if trip_routes else 0,
               'all_routes':summary([v[1] for v in latest.values()]), 'by_route':results,
               'hourly':dict(hours),
+              'sampling_changes':changes,'maximum_fetch_gap_seconds_by_feed':max_gap_seconds,
               'limitations':['Delays are forecasts, not proven actual arrivals.',
                 'Missing RT does not establish cancellation.',
                 'Missing service_date, stale data and unmatched trip IDs are excluded.',
                 'One last fresh pre-event prediction per trip/stop/event type; arrival and departure are distinct.',
                 'Forecasts further than one hour before scheduled event are excluded.']}
+    report['limitations'].append('Nominal request count is an estimate: synchronization follows upstream generation intervals, which can exceed 30 seconds. Shortfall alone does not prove lost published feeds.')
     save_json(out / 'statistics.json', report)
     with (out/'routes.csv').open('w',newline='') as f:
         fields=['route_id','events','mean_delay_seconds','median_delay_seconds','p90_delay_seconds','share_within_minus60_plus300']
@@ -325,6 +367,7 @@ def analyze():
 
 
 def collect():
+    registered_change=False
     while not STOP.is_set():
         try:
             current=now().astimezone(TZ)
@@ -332,18 +375,31 @@ def collect():
                 LOG.info('CTM_WAITING collection_start=%s',MIDNIGHT.isoformat())
                 STOP.wait(min(60,(MIDNIGHT-current).total_seconds()));continue
             plan=prepare()
+            if not registered_change:
+                change_file=BASE/'sampling-changes.json'
+                changes=json.loads(change_file.read_text()) if change_file.exists() else []
+                if not changes or changes[-1]['interval_seconds']!=POLL_SECONDS:
+                    changes.append({'effective_at_epoch':time.time(), 'effective_at':now().isoformat(),
+                                    'interval_seconds':POLL_SECONDS,'synchronization':'feed_header_timestamp_plus_interval_plus_6s'})
+                    save_json(change_file,changes)
+                    LOG.info('CTM_SAMPLING_CHANGE %s',json.dumps(changes[-1]))
+                registered_change=True
             end=datetime.fromisoformat(plan['collection_end'])
             if current >= end:
                 archive=ROOT/('ctm-'+DAY.isoformat()+'.zip')
                 if not archive.exists(): analyze()
                 return
-            slot=int(time.time()//60)*60
+            slot=int(time.time()//POLL_SECONDS)*POLL_SECONDS
             # Parallel requests keep the two snapshots close together.
             with ThreadPoolExecutor(max_workers=2) as pool:
-                list(pool.map(lambda k:capture(k,slot), FEEDS))
-            save_json(BASE/'status.json',{'last_cycle':now().isoformat(),'plan':plan})
-            LOG.info('CTM_CYCLE completed slot=%s',slot)
-            STOP.wait(max(0.1,slot+60-time.time()))
+                records=list(pool.map(lambda k:capture(k,slot), FEEDS))
+            next_poll=next_poll_time(records,time.time())
+            headers={k:r.get('timestamp') for k,r in zip(FEEDS,records)}
+            save_json(BASE/'status.json',{'last_cycle':now().isoformat(),'plan':plan,
+                      'target_interval_seconds':POLL_SECONDS,'feed_timestamps':headers,
+                      'next_poll_utc':datetime.fromtimestamp(next_poll,timezone.utc).isoformat()})
+            LOG.info('CTM_CYCLE completed slot=%s interval=%s headers=%s next_poll=%s',slot,POLL_SECONDS,json.dumps(headers),next_poll)
+            STOP.wait(max(0.1,next_poll-time.time()))
         except Exception:
             LOG.exception('Collector cycle failed')
             STOP.wait(30)
@@ -362,7 +418,7 @@ class Handler(BaseHTTPRequestHandler):
                  '/routes.csv':BASE/'report/routes.csv','/status.json':BASE/'status.json'}
         if self.path=='/':
             body=('<!doctype html><html lang="it"><meta charset="utf-8"><title>Archivio CTM</title>'
-                  '<h1>CTM · 7 novembre 2026</h1><p>Raccolta ogni 60 secondi. Statistiche a fine servizio.</p>'
+                  '<h1>CTM · 7 novembre 2026</h1><p>Raccolta ogni circa 30 secondi, allineata ai timestamp CTM. Statistiche a fine servizio.</p>'
                   '<ul><li><a href="/status.json">Stato</a></li><li><a href="/archive.zip">Archivio ZIP</a></li>'
                   '<li><a href="/statistics.json">Statistiche</a></li><li><a href="/routes.csv">CSV per linea</a></li></ul></html>').encode()
             self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.end_headers();self.wfile.write(body);return
