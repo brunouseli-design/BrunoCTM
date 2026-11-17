@@ -444,12 +444,17 @@ if __name__=='__main__':
     LOG.info('CTM_STORAGE_READY path=%s',ROOT)
     if not os.environ.get('ACCESS_PASSWORD'):
         raise SystemExit('ACCESS_PASSWORD is required')
+    # Supervision is owned by the standard Render entry point and returns immediately.
+    from runtime_bootstrap import start_runtime
+    runtime_stop = start_runtime(ROOT)
     thread=threading.Thread(target=collect,daemon=True);thread.start()
     server=ThreadingHTTPServer(('0.0.0.0',int(os.environ.get('PORT','10000'))),Handler)
     def shutdown(*_):
+        runtime_stop.set()
         STOP.set()
         threading.Thread(target=server.shutdown,daemon=True).start()
     signal.signal(signal.SIGTERM,shutdown)
     signal.signal(signal.SIGINT,shutdown)
     server.serve_forever()
     thread.join(timeout=27)
+
