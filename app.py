@@ -203,7 +203,7 @@ def capture(kind, slot):
     return record
 
 
-def analyze():
+def analyze(make_archive=True):
     """Latest fresh pre-event prediction per trip/stop/type; never claim observation."""
     from collections import Counter, defaultdict
     db = sqlite3.connect(BASE / 'schedule.sqlite')
@@ -352,12 +352,13 @@ def analyze():
         for key,(fetched,delay,route,hour) in latest.items():
             writer.writerow([*key,datetime.fromtimestamp(fetched,timezone.utc).isoformat(),delay,route])
     save_json(BASE/'completed.json', {'completed_at':now().isoformat(),'statistics':report})
-    archive = ROOT / ('ctm-' + DAY.isoformat() + '.zip')
-    with zipfile.ZipFile(str(archive)+'.tmp','w',zipfile.ZIP_DEFLATED) as z:
-        for p in BASE.rglob('*'):
-            if p.is_file() and not p.name.endswith('.tmp'):
-                z.write(p, str(Path(DAY.isoformat())/p.relative_to(BASE)))
-    Path(str(archive)+'.tmp').replace(archive)
+    if make_archive:
+        archive = ROOT / ('ctm-' + DAY.isoformat() + '.zip')
+        with zipfile.ZipFile(str(archive)+'.tmp','w',zipfile.ZIP_DEFLATED) as z:
+            for p in BASE.rglob('*'):
+                if p.is_file() and not p.name.endswith('.tmp'):
+                    z.write(p, str(Path(DAY.isoformat())/p.relative_to(BASE)))
+        Path(str(archive)+'.tmp').replace(archive)
     LOG.info('CTM_REPORT_SUMMARY %s', json.dumps({k:v for k,v in report.items() if k not in ('by_route','hourly')},ensure_ascii=False))
     for route,values in results.items():
         LOG.info('CTM_REPORT_ROUTE %s',json.dumps({'route_id':route,**values}))

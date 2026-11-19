@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request,urlopen
 from zoneinfo import ZoneInfo
-TZ=ZoneInfo('Europe/Rome');COLLECTION_END=datetime(2026,11,22,7,tzinfo=timezone.utc).timestamp();EXPIRY=datetime(2026,12,6,tzinfo=TZ).timestamp()
+TZ=ZoneInfo('Europe/Rome');FIRST=date(2026,11,8);LAST=date(2026,12,6);COLLECTION_END=datetime(2026,12,7,7,tzinfo=timezone.utc).timestamp();EXPIRY=datetime(2026,12,7,12,tzinfo=TZ).timestamp()
 HERE=Path(__file__).resolve().parent
 
 def read(p):
@@ -65,8 +65,8 @@ def fleet(root):
 
 def health(root):
  now=time.time();state=read(root/'ctm-extension/state.json');days=[]
- for i in range(14):
-  day=(date(2026,11,8)+timedelta(days=i)).isoformat();base=root/day;plan=read(base/'plan.json');status=read(base/'status.json')
+ for i in range((LAST-FIRST).days+1):
+  day=(FIRST+timedelta(days=i)).isoformat();base=root/day;plan=read(base/'plan.json');status=read(base/'status.json')
   def epoch(v):
    try:return datetime.fromisoformat(v).timestamp()
    except (ValueError,TypeError):return None
@@ -101,7 +101,7 @@ class Supervisor:
    self.ensure('collector',[sys.executable,str(HERE/'collection_runtime.py'),'--root',str(root)],root/'ctm-extension/runner.lock',root/'ctm-extension/runner.log')
   if (root/'ctm_daily_reader_supervisor.py').exists():self.ensure('daily',[sys.executable,str(root/'ctm_daily_reader_supervisor.py')],root/'ctm-daily-supervisor.lock',root/'ctm-daily-supervisor.log')
   if (root/'ctm_headway_reader.py').exists():self.ensure('headways',[sys.executable,str(root/'ctm_headway_reader.py')],root/'ctm-headway-reader.lock',root/'ctm-headway-reader.log',128)
-  if (root/'ctm-fleet-daily/runner.py').exists() and read(root/'ctm-fleet-daily/published.json').get('periodEnd')!='2026-11-21':
+  if (root/'ctm-fleet-daily/runner.py').exists() and read(root/'ctm-fleet-daily/published.json').get('periodEnd')!=LAST.isoformat():
    self.ensure('fleet',[sys.executable,str(HERE/'runtime_bootstrap.py'),'--root',str(root),'--fleet'],root/'ctm-fleet-daily/runner.lock',root/'ctm-fleet-daily/runner.log',128)
   collector=self.children.get('collector');external_collector=locked(root/'ctm-extension/runner.lock') and not (collector and collector.poll() is None)
   # Existing day7 report/archive are deliberately excluded.
@@ -109,9 +109,9 @@ class Supervisor:
    if self.report.poll() is not None:self.report=None
    elif now-self.report_started>1800:self.report.terminate()
   if not self.report and not external_collector:
-   for i in range(14):
-    day=(date(2026,11,8)+timedelta(days=i)).isoformat();base=root/day;plan=read(base/'plan.json')
-    if plan and datetime.fromisoformat(plan['collection_end']).timestamp()<=now and not (root/('ctm-'+day+'.zip')).exists() and now-self.attempts.get('report:'+day,0)>=300:
+   for i in range((LAST-FIRST).days+1):
+    day=(FIRST+timedelta(days=i)).isoformat();base=root/day;plan=read(base/'plan.json')
+    if plan and datetime.fromisoformat(plan['collection_end']).timestamp()<=now and not __import__('collection_runtime').report_ready(root,date.fromisoformat(day)) and now-self.attempts.get('report:'+day,0)>=300:
      self.report=spawn([sys.executable,str(HERE/'collection_runtime.py'),'--root',str(root),'--worker','report','--day',day],out/'report.log');self.report_started=now;self.attempts['report:'+day]=now;break
   value=health(root);value['supervisorPid']=os.getpid();tmp=out/'state.tmp';tmp.write_text(json.dumps(value));tmp.replace(out/'state.json')
   if now-self.last_publish>=60:

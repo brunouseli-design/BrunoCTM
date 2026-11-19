@@ -5,9 +5,9 @@ import fcntl,hashlib,importlib.util,json,logging,os,signal,subprocess,sys,thread
 from datetime import date,datetime,timedelta,timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
-TZ=ZoneInfo('Europe/Rome');FIRST=date(2026,11,8);LAST=date(2026,11,21)
+TZ=ZoneInfo('Europe/Rome');FIRST=date(2026,11,8);LAST=date(2026,12,6)
 # Absolute safety ceiling only when no static was acquired. It is not a GTFS end time.
-DEADLINE=datetime(2026,11,22,7,tzinfo=timezone.utc).timestamp()
+DEADLINE=datetime(2026,12,7,7,tzinfo=timezone.utc).timestamp()
 STOP=threading.Event();HEAVY=threading.Lock()
 def read(path):
  try:return json.loads(Path(path).read_text())
@@ -42,6 +42,12 @@ def prepare_static(m):
   if db.execute('pragma quick_check').fetchone()[0]!='ok':raise ValueError('Invalid derived SQLite')
  pending.replace(base/'schedule.sqlite');m.save_json(base/'plan.json',plan);return plan
 
+def report_ready(root,day):
+ """Preserve first-study ZIPs; future raw data need no second on-disk copy."""
+ root=Path(root)
+ if day<=date(2026,11,21):return (root/('ctm-'+day.isoformat()+'.zip')).exists()
+ return (root/day.isoformat()/'completed.json').exists() and (root/day.isoformat()/'report/statistics.json').exists()
+
 def heavy_worker(root,day,mode):
  """One bounded subprocess across static/report/fleet; never in the RT thread."""
  import resource
@@ -56,7 +62,7 @@ def heavy_worker(root,day,mode):
   if mode=='prepare':prepare_static(m)
   elif mode=='report':
    if not (m.BASE/'static.zip').exists() or not (m.BASE/'plan.json').exists():return 76
-   if not (m.ROOT/('ctm-'+day.isoformat()+'.zip')).exists():m.analyze()
+   if not report_ready(root,day):m.analyze(make_archive=day<=date(2026,11,21))
   else:raise ValueError('Invalid worker mode')
  return 0
 
