@@ -3,7 +3,7 @@ services:
     name: ctm-monitor-2026-11-07
     runtime: python
     region: frankfurt
-    plan: 0.5c-512mb
+    plan: 1c-2g
     buildCommand: pip install -r requirements.txt
     startCommand: python app.py
     autoDeployTrigger: 'off'
@@ -11,7 +11,7 @@ services:
     disk:
       name: ctm-archive
       mountPath: /var/data
-      sizeGB: 8
+      sizeGB: 11
     envVars:
       - key: DATA_DIR
         value: /var/data
