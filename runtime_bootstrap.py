@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request,urlopen
 from zoneinfo import ZoneInfo
-TZ=ZoneInfo('Europe/Rome');FIRST=date(2026,11,8);LAST=date(2026,12,6);COLLECTION_END=datetime(2026,12,7,7,tzinfo=timezone.utc).timestamp();EXPIRY=datetime(2026,12,7,12,tzinfo=TZ).timestamp()
+TZ=ZoneInfo('Europe/Rome');FIRST=date(2026,11,8);LAST=date(2026,12,31);COLLECTION_END=datetime(2027,1,1,7,tzinfo=timezone.utc).timestamp();EXPIRY=datetime(2027,1,1,12,tzinfo=TZ).timestamp()
 HERE=Path(__file__).resolve().parent
 
 def read(p):
@@ -51,6 +51,7 @@ def fleet(root):
  """Run the private reader unchanged, coordinating its optional subprocesses."""
  root=Path(root);path=root/'ctm-fleet-daily/runner.py'
  spec=importlib.util.spec_from_file_location('private_fleet_runner',path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+ module.END=LAST  # Keep the private daily reader aligned with the authorized service period.
  original_run=module.subprocess.run
  def guarded_run(*a,**kw):
   with (root/'ctm-runtime-v2/heavy.lock').open('a') as lock:
