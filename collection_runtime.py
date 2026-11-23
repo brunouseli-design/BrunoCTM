@@ -5,9 +5,9 @@ import fcntl,hashlib,importlib.util,json,logging,os,signal,subprocess,sys,thread
 from datetime import date,datetime,timedelta,timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
-TZ=ZoneInfo('Europe/Rome');FIRST=date(2026,11,8);LAST=date(2026,12,6)
+TZ=ZoneInfo('Europe/Rome');FIRST=date(2026,11,8);LAST=date(2026,12,31)
 # Absolute safety ceiling only when no static was acquired. It is not a GTFS end time.
-DEADLINE=datetime(2026,12,7,7,tzinfo=timezone.utc).timestamp()
+DEADLINE=datetime(2027,1,1,7,tzinfo=timezone.utc).timestamp()
 STOP=threading.Event();HEAVY=threading.Lock()
 def read(path):
  try:return json.loads(Path(path).read_text())
